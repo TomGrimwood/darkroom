@@ -1,6 +1,6 @@
 [project]
 name = "darkroom"
-version = "0.1.0"
+version = "0.1.1"
 description = "A stage's sensors rendered into capture folders: cameras, lidars and skies by NVIDIA's ovrtx, poses, IMUs and GNSS worked out with USD."
 license = "Apache-2.0"
 requires-python = ">=3.12"

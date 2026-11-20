@@ -127,10 +127,10 @@ def add(out: Path, stats: dict[str, Any]) -> dict[str, Any]:
 
 def _memory_most_mb() -> int | None:
     """The most memory this process has held, MB; None where the system does not say (Windows)."""
-    try:
-        import resource
-    except ImportError:
+    if sys.platform == "win32":
         return None
+    import resource
+
     # ru_maxrss is in kilobytes on Linux, bytes on macOS.
     most = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return round(most / (1024 * 1024 if sys.platform == "darwin" else 1024))
