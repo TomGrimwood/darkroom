@@ -2,6 +2,7 @@
 each scan read back as it went in, its points' times from its pose, its hits named."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -26,7 +27,7 @@ def _scan(rng, n, k):
 
 
 @pytest.mark.parametrize("hits", [False, True])
-def test_raw_scans_pack_into_one_laz_each_as_it_went_in(tmp_path, hits):
+def test_raw_scans_pack_into_one_laz_each_as_it_went_in(tmp_path, hits, monkeypatch):
     rng = np.random.default_rng(3)
     count = 6
     format.write_poses(
@@ -50,6 +51,18 @@ def test_raw_scans_pack_into_one_laz_each_as_it_went_in(tmp_path, hits):
     names = {1: "/World/Wall", 2: "/World/Car"}  # ID 3 not named
     lidarscans.write_index(raw, writer.stamps, writer.counts, kept, RATE, names if hits else None)
     told = []
+    rmtree = lidarscans.shutil.rmtree
+
+    def deleting(folder):  # as Windows would: no raw file may still be mapped
+        import gc
+
+        gc.collect()
+        mapped = [m for m in gc.get_objects() if isinstance(m, np.memmap) and m.filename]
+        held = [m.filename for m in mapped if Path(m.filename).is_relative_to(folder)]
+        assert not held, f"still mapped as {folder} goes: {held}"
+        rmtree(folder)
+
+    monkeypatch.setattr(lidarscans.shutil, "rmtree", deleting)
     packed, before, after = lidarscans.pack_all(tmp_path, lambda s, d: told.append((s, d)))
     assert packed == count - 1 and not raw.exists() and after < before
     assert told[0] == ("lidar", 0.0) and told[-1] == ("lidar", 1.0)

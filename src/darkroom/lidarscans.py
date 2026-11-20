@@ -237,7 +237,7 @@ def pack(
     before = sum(f.stat().st_size for f in raw.iterdir())
     # The raw files let go of first: Windows does not delete a file that is still mapped.
     columns.clear()
-    first = None
+    first = hit_of = None  # the hits' lookup holds the objects file too
     gc.collect()
     shutil.rmtree(raw)
     return len(kept), before, out.stat().st_size
