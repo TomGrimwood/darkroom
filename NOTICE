@@ -1,0 +1,6 @@
+darkroom
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+Files whose header names The Isaac Lab Project Developers (src/darkroom/renderers/ and
+src/darkroom/ovrtx/, copied from https://github.com/isaac-sim/IsaacLab and changed) are under
+Isaac Lab's BSD-3-Clause licence, as their headers say.
