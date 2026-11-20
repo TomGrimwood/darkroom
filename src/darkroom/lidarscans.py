@@ -360,10 +360,11 @@ def write_scans(folder: str | Path, sensor: str, scans: Iterable[tuple[int, form
 
 def _same(back: format.Scan, wrote: dict[str, np.ndarray]) -> bool:
     """Whether `back` (read from LAZ) is the scan in `wrote` (`_batch`'s arrays): points to half
-    `format.LAZ_SCALE` (and float32's own rounding), the rest exactly."""
+    `format.LAZ_SCALE` (and float32's own rounding, 30 um at 300 m), the rest exactly."""
     hit, material = format._recorded(wrote["hit"], wrote["material"])
+    near = format.LAZ_SCALE * 0.6 + np.abs(wrote["points"]) * np.finfo(np.float32).eps
     return bool(
-        np.abs(back.points - wrote["points"]).max(initial=0) <= format.LAZ_SCALE * 0.6
+        np.all(np.abs(back.points - wrote["points"]) <= near)
         and np.array_equal(back.intensity, wrote["intensity"])
         and np.array_equal(back.offset, wrote["offset"])
         and np.array_equal(back.ring, wrote["ring"])

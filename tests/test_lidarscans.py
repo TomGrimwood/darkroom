@@ -95,6 +95,24 @@ def test_raw_scans_pack_into_one_laz_each_as_it_went_in(tmp_path, hits, monkeypa
             )
 
 
+def test_scans_out_to_a_long_range_lidars_reach_pack(tmp_path):
+    rng = np.random.default_rng(5)
+    format.write_poses(
+        tmp_path, "lidar", format.Poses(np.zeros(1), np.zeros((1, 3)), np.array([[1.0, 0, 0, 0]]))
+    )
+    raw = tmp_path / "lidar" / lidarscans.RAW
+    writer = lidarscans.RawWriter(raw)
+    scan = _scan(rng, 20_000, 0)
+    scan["points"] = rng.uniform(-350, 350, (20_000, 3)).astype(np.float32)  # an OS2's
+    del scan["objects"]
+    writer.add(7_000_000_000, **scan)
+    writer.close()
+    lidarscans.write_index(raw, writer.stamps, writer.counts, [(0, 0, 0.0)], RATE, None)
+    assert lidarscans.pack_all(tmp_path)[0] == 1
+    back = format.read_scan(tmp_path, "lidar", 0)
+    assert np.abs(back.points - scan["points"]).max() <= 0.6e-4 + 350 * np.finfo(np.float32).eps
+
+
 def test_a_lidar_left_raw_is_found_to_pack_and_its_index_says_what_was_kept(tmp_path):
     raw = tmp_path / "lidar" / lidarscans.RAW
     writer = lidarscans.RawWriter(raw)
