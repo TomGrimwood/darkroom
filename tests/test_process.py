@@ -39,6 +39,19 @@ def test_a_call_hands_back_its_result_and_progress_and_its_log_says_how_to_run_i
     assert "darkroom.process.child" in again and ".call.json" in again
 
 
+def test_only_the_newest_calls_logs_are_kept(monkeypatch):
+    monkeypatch.setattr(process, "KEPT", 2)
+    logs = []
+    for name in ("a.txt", "b.txt", "c.txt"):
+        progress = []
+        run("os.path:basename", name, on_progress=progress.append)
+        logs.append(Path(progress[0].extra["log"]))
+    assert [log.is_file() for log in logs] == [False, True, True]
+    assert sorted(f.name for f in process.LOGS.glob("*.call.json")) == sorted(
+        log.with_suffix(".call.json").name for log in logs[1:]
+    )
+
+
 def test_lines_said_and_progress_come_back_as_they_are_said(tmp_path, monkeypatch):
     _stand_in(
         tmp_path,

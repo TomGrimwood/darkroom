@@ -7,7 +7,6 @@ from darkroom import events
 from darkroom.board import Board
 from darkroom.events import (
     Made,
-    Packing,
     Plan,
     Planned,
     Rendering,
@@ -34,7 +33,6 @@ def test_each_event_reads_back_as_it_was_sent():
         Riding("camera", ("front", "sky")),
         Writing("lidar", 0),
         Made("camera", "front", "75 frames at 15 Hz"),
-        Packing("ml30s", 0.5),
         Step("A.rrd", "rrd", ("A",), 0.3, "mapping ml30s's scans", 12.0),
     ):
         assert events.read(_sent("x", None, event).extra) == event
@@ -73,20 +71,6 @@ def test_rigs_sharing_a_sensor_are_on_its_row_and_worked_out_ones_done_when_isaa
     assert rows["front"].rigs == ("A",) and rows["front"].state == "waiting"
     board.take(_sent("x", None, Made("camera", "front", "it broke", failed=True)))
     assert {r.name: r.state for r in board.rows()}["front"] == "failed"
-
-
-def test_a_lidar_rendered_is_packing_till_its_scans_are_packed_then_done():
-    board = Board()
-    board.take(_sent("x", None, Planned("lidar", (Plan("ml30s", "lidar", 10, None, 0, 1, 40),))))
-    board.take(_sent("x", None, Made("lidar", "ml30s", "40 scans at 10 Hz", count=40)))
-    board.take(_sent("packing", None, Packing("ml30s", 0.0)))
-    (row,) = board.rows()
-    assert (row.state, row.fraction, row.made) == ("packing", 0.0, 40)
-    board.take(_sent("packing", None, Packing("ml30s", 0.5)))
-    assert board.rows()[0].fraction == 0.5
-    board.take(_sent("packing", None, Packing("ml30s", 1.0)))
-    (row,) = board.rows()
-    assert (row.state, row.fraction, row.said) == ("done", 1.0, "40 scans at 10 Hz")
 
 
 def test_no_event_has_a_field_named_as_progress_arguments():

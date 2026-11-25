@@ -47,6 +47,34 @@ def carriers(stage: Usd.Stage, sensors: list) -> dict[str, str]:
     return found
 
 
+def named(stage: Usd.Stage, patterns: Collection[str]) -> dict[str, str]:
+    """The prims `patterns` name (paths, or patterns of them as a shell's: `*` within one
+    name, "/World/Machine/*" its children), by name. Raises for a pattern that names none,
+    or two prims of one name."""
+    from fnmatch import fnmatchcase
+
+    found: dict[str, str] = {}
+    for pattern in patterns:
+        parts = pattern.strip("/").split("/")
+        if not any(c in pattern for c in "*?["):
+            prims = [stage.GetPrimAtPath(pattern)] if stage.GetPrimAtPath(pattern) else []
+        else:
+            prims = []
+            for prim in stage.Traverse():
+                names = str(prim.GetPath()).strip("/").split("/")
+                if len(names) == len(parts) and all(map(fnmatchcase, names, parts)):
+                    prims.append(prim)
+        if not prims:
+            raise RuntimeError(f"No prim is {pattern!r}, to keep as a body.")
+        for prim in prims:
+            was = found.setdefault(prim.GetName(), str(prim.GetPath()))
+            if was != str(prim.GetPath()):
+                raise RuntimeError(
+                    f"Two bodies are called {prim.GetName()}: {was}, {prim.GetPath()}."
+                )
+    return found
+
+
 def _fixes(moving: motion.Motion, where: Any, rate: float) -> dict[str, np.ndarray]:
     """`moving`'s true fixes at `rate` a second: seconds, latitude, longitude, height, and
     altitude when the site gives the geoid."""
@@ -192,11 +220,12 @@ def write(
     place: float | None = surroundings.WITHIN,
     on_line=None,
     cell: float = surroundings.CELL,
+    bodies: Collection[str] = (),
 ) -> format.Meta:
     """Write `meta.json`, each sensor's `poses.npz`, and the IMUs' and antennas' samples into
-    `out`; what carries them (`carriers`: poses, and its mesh), and the place within `place` m of
-    where it went (`surroundings.nearby`, its points merged on a `cell` m grid; None: not). Returns
-    the meta, for the renderer's side to add to."""
+    `out`; what carries them (`carriers`: poses, and its mesh) and the prims `bodies` names
+    (`named`), and the place within `place` m of where it went (`surroundings.nearby`, its points
+    merged on a `cell` m grid; None: not). Returns the meta, for the renderer's side to add to."""
     stage = Usd.Stage.Open(str(stage_file))
     if UsdGeom.GetStageUpAxis(stage) != UsdGeom.Tokens.z:
         raise RuntimeError(f"{stage_file} is Y up; sensors are worked out on Z-up stages.")
@@ -277,7 +306,7 @@ def write(
 
     # What carries the sensors and its tip, as sensors are kept; the carrier's mesh; the place about.
     meta.start_utc = start_utc(stage, span.start)
-    meta.bodies = carriers(stage, [s.path for s in found])
+    meta.bodies = carriers(stage, [s.path for s in found]) | named(stage, bodies)
     at = motion.sample_times(span.start, span.end, BODY_RATE)
     way = []
     for name, path in meta.bodies.items():

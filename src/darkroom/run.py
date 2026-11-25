@@ -1,7 +1,6 @@
 """A capture, start to end: the truth from USD, then ovrtx in a process of its own for the
 cameras, the lidars and the GNSS antennas' skies (its launcher, `darkroom.process.call`), their progress
-handed to `on_progress` as it comes, then each lidar's scans packed and how much of each
-antenna's view was sky (`skies`).
+handed to `on_progress` as it comes, then how much of each antenna's view was sky (`skies`).
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from typing import Any
 from darkroom import process, sensorkit
 from darkroom.process import OUT_OF_GPU
 
-from . import events, format, lidarscans, looks, renderers, renderjob, skies, truth, turns
+from . import events, format, looks, renderers, renderjob, skies, truth, turns
 from .options import Job, Options
 from .renderers import renderer_cfg
 from .renderjob import RenderJob
@@ -91,6 +90,15 @@ def _unmade(one: _Ready) -> list[str]:
     ]
 
 
+def _whole(out: Path, name: str, kind: str) -> bool:
+    """Whether sensor `name` of the capture in `out` was made whole (`format.was_made`), a
+    lidar with its scans' LAZ there: one an older darkroom left with its scans not yet in a
+    LAZ is rendered again."""
+    if format.was_made(out, name) is None:
+        return False
+    return kind != "lidar" or (out / name / format.PACKED).is_file()
+
+
 def _carry_on(out: Path, stage_file: Path, on_line: Callable[[str], object] | None) -> list[str]:
     """A capture of `stage_file` in `out` that did not finish, made ready to carry on: the
     sensors its renderer made all of kept (`format.was_made`), the rest cleared to render again
@@ -101,9 +109,7 @@ def _carry_on(out: Path, stage_file: Path, on_line: Callable[[str], object] | No
             f"{out} has an unfinished capture of {before.stage}, not {stage_file}: "
             "capture into a new folder."
         )
-    kept = [name for name in before.sensors if format.was_made(out, name) is not None]
-    for name in kept:  # a lidar made, its packing cut off: packed again from its raw scans
-        (out / name / f"{format.PACKED}.part").unlink(missing_ok=True)
+    kept = [name for name in before.sensors if _whole(out, name, before.sensors[name].kind)]
     part = 0
     for name in set(before.sensors) - set(kept):
         (out / f"{name}_mosaic.jpg").unlink(missing_ok=True)
@@ -219,7 +225,9 @@ def _prepare(
         raise RuntimeError(f"{out} has a capture in it already: capture into a new folder.")
     stage_file = Path(job.stage_file).resolve()
     kept = _carry_on(out, stage_file, on_line) if (out / format.META).exists() else []
-    meta = truth.write(stage_file, out, o.window, o.kinds, on_line=on_line, cell=o.scenery_cell)
+    meta = truth.write(
+        stage_file, out, o.window, o.kinds, on_line=on_line, cell=o.scenery_cell, bodies=o.bodies
+    )
     for name in kept:  # a board shows them done from the start
         sensor, was = meta.sensors.get(name), format.was_made(out, name)
         if on_progress and sensor is not None and was is not None:
@@ -388,20 +396,8 @@ def _finish(
     on_progress: Callable[[process.Progress], object] | None,
     on_line: Said | None,
 ) -> None:
-    """`one`'s capture in `out` finished once all is rendered: its lidars' scans packed into a
-    LAZ each (`lidarscans`), how much of each antenna's view was sky (`skies`), and it marked
-    done."""
-
-    def packing(sensor: str, done: float) -> None:
-        if on_progress:
-            said = events.extra(events.Packing(sensor, done))
-            on_progress(process.Progress(f"packing {sensor}'s scans as LAZ", None, said))
-
-    packed, before, after = lidarscans.pack_all(out, packing)
-    if packed and on_line:
-        on_line(
-            f"lidar scans packed as LAZ: {packed}, {before / 2**30:.2f} GB -> {after / 2**30:.2f} GB"
-        )
+    """`one`'s capture in `out` finished once all is rendered: how much of each antenna's view
+    was sky measured (`skies`), and it marked done."""
     if one.skies and on_progress:
         on_progress(process.Progress("measuring how much sky each antenna saw", None, {}))
     for line in skies.write(one.job.stage_file, out) if one.skies else []:

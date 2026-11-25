@@ -18,7 +18,6 @@ LOOK = {
     "waiting": ("grey50", "·"),
     "rendering": ("cyan", "▶"),
     "writing": ("yellow", "✎"),
-    "packing": ("yellow", "⇲"),
     "making": ("cyan", "▶"),
     "done": ("green", "✓"),
     "failed": ("red", "✗"),

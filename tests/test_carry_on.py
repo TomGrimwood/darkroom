@@ -31,6 +31,25 @@ def test_an_unfinished_capture_keeps_the_sensors_made_and_clears_the_rest(tmp_pa
     assert said == [f"carrying on {out}: 1 of 2 sensors made before, kept"]
 
 
+def test_a_lidar_made_without_its_laz_is_rendered_again(tmp_path):
+    """As darkroom 0.1.2 left one whose render stopped before its scans were packed."""
+    stage = tmp_path / "run.usda"
+    stage.write_text("#usda 1.0\n", encoding="utf-8")
+    out = tmp_path / "capture"
+    sensors = {n: format.Sensor("lidar", f"/Rig/{n}", 10.0) for n in ("packed", "raw")}
+    format.write_meta(out, format.Meta(str(stage), 0.0, 1.0, sensors))
+    for name in sensors:
+        (out / name).mkdir()
+        format.made(out, name, "10 scans at 10 Hz, 0.50 M points, in 2 s", 10)
+    (out / "packed" / format.PACKED).write_bytes(b"x")
+    (out / "raw" / ".raw").mkdir()
+    (out / "raw" / ".raw" / "points.bin").write_bytes(b"x")
+    said = []
+    _carry_on(out, stage.resolve(), said.append)
+    assert format.was_made(out, "packed") is not None and not (out / "raw").exists()
+    assert said == [f"carrying on {out}: 1 of 2 sensors made before, kept"]
+
+
 def test_a_camera_part_made_keeps_its_whole_frames_and_drops_a_cut_off_one(tmp_path):
     stage = tmp_path / "run.usda"
     stage.write_text("#usda 1.0\n", encoding="utf-8")

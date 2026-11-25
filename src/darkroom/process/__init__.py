@@ -42,6 +42,8 @@ __all__ = ["OUT_OF_GPU", "Failed", "Progress", "call", "progress"]
 ERRORS = 30
 #: Where each call's whole log is kept, with the command to run it again at its top.
 LOGS = Path(tempfile.gettempdir()) / "darkroom"
+#: How many calls' logs are kept there, the newest: the rest go as a call starts.
+KEPT = 10
 #: The lock every call takes first, machine-wide: one renderer at a time (two share one GPU's
 #: memory and run out).
 LOCK = "renderer.lock"
@@ -128,6 +130,16 @@ def one_at_a_time(on_line: Callable[[str], object] | None = print) -> Generator[
         lock.release()
 
 
+def _forget(keep: int) -> None:
+    """All but the newest `keep` calls' logs in `LOGS` gone, each with its call's file. One
+    that will not go (another process's, open still, on Windows) is left for the next call."""
+    logs = sorted(LOGS.glob("*.log"), key=lambda log: log.stat().st_mtime)
+    for log in logs[: max(0, len(logs) - keep)]:
+        for file in (log, log.with_suffix(".call.json")):
+            with contextlib.suppress(OSError):
+                file.unlink()
+
+
 def _shell_line(env: Mapping[str, str], command: list[str]) -> str:
     """The command as a person would type it again, in this system's shell."""
     if sys.platform == "win32":
@@ -153,14 +165,16 @@ def call(
     log"). Returns what it returned.
 
     What it says (`progress`, and any other line it means to be read) goes to `on_progress`
-    and `on_line` as it comes; the rest of its output only to a log in `LOGS`, kept, which
-    starts with the command that makes the same call again. The first progress is
-    "starting <name>", its `extra` the target and the log's path. `on_start` is handed a
-    `Stopper` as it starts. `env` is set in the process's environment over the caller's own.
+    and `on_line` as it comes; the rest of its output only to a log in `LOGS` (the newest
+    `KEPT` calls' are kept), which starts with the command that makes the same call again. The
+    first progress is "starting <name>", its `extra` the target and the log's path. `on_start`
+    is handed a `Stopper` as it starts. `env` is set in the process's environment over the
+    caller's own.
     Raises `Failed` when it does not finish, or when it says the GPU's memory ran out
     (`OUT_OF_GPU`): it would go on rendering black, so it is killed then.
     """
     LOGS.mkdir(parents=True, exist_ok=True)
+    _forget(KEPT - 1)
     handle, made = tempfile.mkstemp(prefix=f"{target.replace(':', '_')}_", suffix=".log", dir=LOGS)
     os.close(handle)
     log = Path(made)

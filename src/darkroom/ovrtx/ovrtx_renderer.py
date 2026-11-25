@@ -373,10 +373,12 @@ class OVRTXRenderer(BaseRenderer):
             semantic=ovstage.AttributeSemantic.RELATIONSHIP_PATH_ID,
         )
 
-    def create_lidar_data(self, prim_path: str, raw: Path, hits: bool) -> OVRTXLidarRenderData:
+    def create_lidar_data(
+        self, prim_path: str, scans: lidarscans.ScanWriter, hits: bool
+    ) -> OVRTXLidarRenderData:
         """Register a lidar's copy (`ovrtx_usd.sensor_lidar`) and its render product in the
-        prepared scene: its scans go into raw files in `raw` as they come (`scan_batch`);
-        with `hits`, each point's object too. Not Isaac Lab's: its renderers render cameras."""
+        prepared scene: its scans are handed to `scans` as they come (`scan_batch`); with
+        `hits`, each point's object too. Not Isaac Lab's: its renderers render cameras."""
         if self.scene is None or self.backend is None or not self._initialized_scene:
             raise RuntimeError("Scene not initialized. Call prepare_stage() first.")
         scene, stage = self.scene, self._sim.stage
@@ -385,7 +387,7 @@ class OVRTXRenderer(BaseRenderer):
         lidar_path = str(lidar.GetPath())
         lidar_usd = ovrtx_usd.build_sensor_as_string(lidar)
         scope = f"RenderLidar_{scene.next_camera_id}"
-        render_data = OVRTXLidarRenderData(prim_path, scope, lidarscans.RawWriter(raw, hits), hits)
+        render_data = OVRTXLidarRenderData(prim_path, scope, scans, hits)
         usd = ovrtx_usd.build_lidar_product_as_string(scope, lidar_path, hits)
         try:
             self._register(
@@ -408,7 +410,7 @@ class OVRTXRenderer(BaseRenderer):
 
     def scan_batch(self, render_data: Sequence[OVRTXLidarRenderData]) -> None:
         """One step of ovrtx's clock (`render_batch`'s, for lidars): each lidar's scan that
-        ended in it, if one did, written to its raw files."""
+        ended in it, if one did, handed to its writer."""
         if not render_data:
             return
         result = self._step()

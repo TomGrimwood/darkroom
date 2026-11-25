@@ -8,7 +8,6 @@ plain data: it crosses from the renderer's process as JSON) and read back from i
 - `Rendering`, `Writing`: a turn of a kind playing the window, then writing what it rendered;
 - `Riding`: the cameras on now (`renderers.once`), said as one gets on or off;
 - `Made`: a sensor done, with what it made or why it failed;
-- `Packing`: a lidar's scans packed in one LAZ, once all is rendered;
 - `Step`: the caller's own work on what was rendered, after it (a recording made of the
   capture, say): a row of its own, said from the start, waiting till its turn.
 
@@ -114,15 +113,6 @@ class Made:
 
 
 @dataclass(frozen=True)
-class Packing:
-    """Lidar `sensor`'s scans being packed in one LAZ, once all is rendered: `done` of them (0
-    to 1; at 1, packed)."""
-
-    sensor: str
-    done: float
-
-
-@dataclass(frozen=True)
 class Step:
     """Work on what the render made, after it (a recording or a bag made of a capture): a row
     `name` of `kind` ("rrd", "mcap"), for `rigs`. `done` of it so far, 0 to 1 (None: not
@@ -140,9 +130,9 @@ class Step:
     failed: bool = False
 
 
-Event = Uses | Planned | Rendering | Riding | Writing | Made | Packing | Step
+Event = Uses | Planned | Rendering | Riding | Writing | Made | Step
 _TYPES: dict[str, type] = {
-    t.__name__.lower(): t for t in (Uses, Planned, Rendering, Riding, Writing, Made, Packing, Step)
+    t.__name__.lower(): t for t in (Uses, Planned, Rendering, Riding, Writing, Made, Step)
 }
 
 
