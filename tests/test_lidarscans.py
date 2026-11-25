@@ -1,8 +1,6 @@
-"""A lidar's scans as Isaac Sim writes them (a file a field, appended) packed into its one LAZ:
-each scan read back as it went in, its points' times from its pose, its hits named."""
-
-import json
-from pathlib import Path
+"""A lidar's scans written into its one LAZ as its renderer hands them over (`ScanWriter`):
+each read back as it went in, its index filled in place, the window's whole scans kept and
+numbered, what each point hit named as it first comes back."""
 
 import numpy as np
 import pytest
@@ -10,192 +8,151 @@ import pytest
 from darkroom import format, lidarscans
 
 RATE = 10.0
+#: A renderer's clock, 5 s ahead of the window.
+AHEAD = 5.0
 
 
-def _scan(rng, n, k):
+def _seconds(ns):
+    return ns / 1e9 - AHEAD
+
+
+def _stamp(second):
+    return round((AHEAD + second) * 1e9)
+
+
+def _scan(rng, n, ids):
+    """A scan of `n` points, each hitting one of object `ids` (runs of them, as a lidar's do)."""
+    which = np.repeat(rng.integers(0, len(ids), n // 7 + 1), 7)[:n]
+    objects = np.zeros((n, 16), np.uint8)
+    objects[:, 0] = np.asarray(ids, np.uint8)[which]
+    objects[:, 9] = 3  # the high half too
     return {
-        "points": rng.uniform(-30, 30, (n, 3)).astype(np.float32),
+        "points": rng.uniform(-300, 300, (n, 3)).astype(np.float32),
         "intensity": rng.uniform(0, 1.3, n).astype(np.float32),
         "offsets": np.sort(rng.integers(0, 99_000_000, n)).astype(np.int64),
-        "ret": rng.integers(0, 2, n).astype(np.uint8),  # first and second returns
+        "ret": rng.integers(0, 2, n).astype(np.uint8),
         "ring": rng.integers(0, 128, n).astype(np.uint32),
         "material": rng.integers(0, 40, n).astype(np.uint32),
-        "objects": np.repeat(
-            np.array([[k % 3 + 1] + [0] * 15], np.uint8), n, axis=0
-        ),  # IDs 1, 2 or 3
+        "objects": objects,
     }
 
 
-@pytest.mark.parametrize("hits", [False, True])
-def test_raw_scans_pack_into_one_laz_each_as_it_went_in(tmp_path, hits, monkeypatch):
+def _named(ids):
+    """Object `ids` as a renderer's table names them: 1 a wall, 2 a car, the rest unnamed."""
+    called = {1: "/World/Wall", 2: "/World/Car"}
+    return [called.get(int(row[0])) for row in np.asarray(ids).reshape(-1, 16)]
+
+
+def _poses(folder, sensor, count):
+    seconds = np.arange(count) / RATE
+    rotation = np.tile([1.0, 0, 0, 0], (count, 1))
+    format.write_poses(folder, sensor, format.Poses(seconds, np.zeros((count, 3)), rotation))
+
+
+def _given(rng, began, n=400):
+    """Scans begun at `began` (seconds of the window), stamped by the renderer's clock."""
+    return [(_stamp(s), _scan(rng, 0 if k == 2 else n + 50 * k, [1, 2, 3])) for k, s in enumerate(began)]  # fmt: skip
+
+
+def _streamed(folder, given, span, names=_named, blind=False):
+    writer = lidarscans.ScanWriter(folder, "lidar", RATE, span, names, blind)
+    writer.start(_seconds)
+    for stamp, scan in given:
+        writer.add(stamp, **scan)
+    return writer.finish()
+
+
+def test_scans_written_as_they_come_read_back_as_they_went_in(tmp_path):
+    """One before the window and one ending after it left out; scan 2 saw nothing. Points out
+    to a long-range lidar's reach, where float32 rounds coarser than the LAZ's grid."""
     rng = np.random.default_rng(3)
-    count = 6
-    format.write_poses(
-        tmp_path,
-        "lidar",
-        format.Poses(
-            np.arange(count) / RATE, np.zeros((count, 3)), np.tile([1.0, 0, 0, 0], (count, 1))
-        ),
-    )
-    raw = tmp_path / "lidar" / lidarscans.RAW
-    writer = lidarscans.RawWriter(raw, with_hits=hits)
-    went = {}
-    stamp0 = 7_000_000_000
-    for k in range(count):
-        scan = _scan(rng, 0 if k == 2 else 500 + 100 * k, k)  # scan 2 saw nothing
-        writer.add(stamp0 + k * 100_000_000, **scan)
-        went[k] = scan
-    writer.close()
-    # Kept: every scan but the first, which began a little late (2 ms) and is numbered so.
-    kept = [(k, k, k / RATE + 0.002) for k in range(1, count)]
-    names = {1: "/World/Wall", 2: "/World/Car"}  # ID 3 not named
-    lidarscans.write_index(raw, writer.stamps, writer.counts, kept, RATE, names if hits else None)
-    told = []
-    rmtree = lidarscans.shutil.rmtree
-
-    def deleting(folder):  # as Windows would: no raw file may still be mapped
-        import gc
-
-        gc.collect()
-        mapped = [m for m in gc.get_objects() if isinstance(m, np.memmap) and m.filename]
-        held = [m.filename for m in mapped if Path(m.filename).is_relative_to(folder)]
-        assert not held, f"still mapped as {folder} goes: {held}"
-        rmtree(folder)
-
-    monkeypatch.setattr(lidarscans.shutil, "rmtree", deleting)
-    packed, before, after = lidarscans.pack_all(tmp_path, lambda s, d: told.append((s, d)))
-    assert packed == count - 1 and not raw.exists() and after < before
-    assert told[0] == ("lidar", 0.0) and told[-1] == ("lidar", 1.0)
-    assert format.scan_numbers(tmp_path, "lidar") == list(range(1, count))
+    given = _given(rng, [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
+    _poses(tmp_path, "lidar", 5)
+    result = _streamed(tmp_path, given, span=0.5)
+    assert (result.count, result.unit) == (5, "scans")
+    assert format.scan_numbers(tmp_path, "lidar") == [0, 1, 2, 3, 4]
     paths = format.read_hits(tmp_path, "lidar")
-    assert paths == (["/World/Car", "/World/Wall"] if hits else [])
-    for k in range(1, count):
-        back, scan = format.read_scan(tmp_path, "lidar", k), went[k]
-        assert np.abs(back.points - scan["points"]).max(initial=0) <= 0.6e-4
-        assert np.array_equal(back.intensity, scan["intensity"])
-        assert np.array_equal(back.ring, scan["ring"]) and np.array_equal(back.ret, scan["ret"])
-        offset = (scan["offsets"] / 1e9 + 0.002).astype(np.float32)  # from its pose
-        assert np.array_equal(back.offset, offset)
-        if len(scan["ring"]):
-            if hits:
-                want = {1: paths.index("/World/Wall"), 2: paths.index("/World/Car")}
-                assert np.all(back.hit == want.get(k % 3 + 1, format.NO_HIT))
-            else:
-                assert np.all(back.hit == format.NO_HIT)
-            assert np.array_equal(back.material, scan["material"])
+    assert sorted(paths) == ["/World/Car", "/World/Wall"]
+    for number, (_, went) in enumerate(given[1:6]):
+        back = format.read_scan(tmp_path, "lidar", number)
+        near = format.LAZ_SCALE / 2 + np.abs(went["points"]) * np.finfo(np.float32).eps
+        assert np.all(np.abs(back.points - went["points"]) <= near), number
+        assert np.array_equal(back.intensity, went["intensity"]), number
+        assert np.allclose(back.offset, went["offsets"] / 1e9, atol=1e-6), number
+        for field in ("ring", "ret", "material"):
+            assert np.array_equal(getattr(back, field), went[field]), (number, field)
+        # The prim each point hit, as the renderer's table names its object.
+        assert list(_paths(paths, back.hit)) == _named(went["objects"]), number
     import laspy
 
-    las = laspy.read(str(tmp_path / "lidar" / format.PACKED))
-    for k in range(1, count):
-        mine = np.asarray(las.scan) == k
-        if mine.any():  # each scan's own greatest return, its time from its pose
-            assert set(np.asarray(las.number_of_returns)[mine]) == {went[k]["ret"].max() + 1}
-            assert np.allclose(
-                las.gps_time[mine], k / RATE + (went[k]["offsets"] / 1e9 + 0.002), atol=1e-6
-            )
+    las = laspy.read(str(tmp_path / "lidar" / format.PACKED))  # each point's time from its pose
+    third = np.asarray(las.scan) == 2
+    assert third.sum() == len(given[3][1]["ring"]) > 0
+    assert np.allclose(las.gps_time[third], 0.2 + given[3][1]["offsets"] / 1e9, atol=1e-6)
+    assert not (tmp_path / "lidar" / (format.PACKED + ".part")).exists()
 
 
-def test_scans_out_to_a_long_range_lidars_reach_pack(tmp_path):
-    rng = np.random.default_rng(5)
-    format.write_poses(
-        tmp_path, "lidar", format.Poses(np.zeros(1), np.zeros((1, 3)), np.array([[1.0, 0, 0, 0]]))
-    )
-    raw = tmp_path / "lidar" / lidarscans.RAW
-    writer = lidarscans.RawWriter(raw)
-    scan = _scan(rng, 20_000, 0)
-    scan["points"] = rng.uniform(-350, 350, (20_000, 3)).astype(np.float32)  # an OS2's
-    del scan["objects"]
-    writer.add(7_000_000_000, **scan)
-    writer.close()
-    lidarscans.write_index(raw, writer.stamps, writer.counts, [(0, 0, 0.0)], RATE, None)
-    assert lidarscans.pack_all(tmp_path)[0] == 1
-    back = format.read_scan(tmp_path, "lidar", 0)
-    assert np.abs(back.points - scan["points"]).max() <= 0.6e-4 + 350 * np.finfo(np.float32).eps
-
-
-def test_several_lidars_each_pack_as_it_went_in(tmp_path):
+def test_several_lidars_are_each_written_as_they_went_in(tmp_path):
     rng = np.random.default_rng(7)
-    went = {}
+    went, writers = {}, {}
     for sensor in ("left", "right", "middle"):
-        pose = format.Poses(np.zeros(1), np.zeros((1, 3)), np.array([[1.0, 0, 0, 0]]))
-        format.write_poses(tmp_path, sensor, pose)
-        raw = tmp_path / sensor / lidarscans.RAW
-        writer = lidarscans.RawWriter(raw)
-        scan = _scan(rng, 3_000, 0)
-        del scan["objects"]
-        writer.add(7_000_000_000, **scan)
-        writer.close()
-        lidarscans.write_index(raw, writer.stamps, writer.counts, [(0, 0, 0.0)], RATE, None)
-        went[sensor] = scan
-    told = []
-    assert lidarscans.pack_all(tmp_path, lambda s, d: told.append((s, d)))[0] == 3
-    assert {s for s, d in told if d == 1.0} == set(went)
-    for sensor, scan in went.items():
-        back = format.read_scan(tmp_path, sensor, 0)
-        assert np.abs(back.points - scan["points"]).max() <= 0.6e-4
-        assert np.array_equal(back.ring, scan["ring"])
+        _poses(tmp_path, sensor, 2)
+        went[sensor] = _given(rng, [0.0, 0.1], n=3_000)
+        writers[sensor] = lidarscans.ScanWriter(tmp_path, sensor, RATE, 0.2)
+        writers[sensor].start(_seconds)
+    for k in range(2):  # a step of the renderer: each lidar's scan that ended in it
+        for sensor, writer in writers.items():
+            stamp, scan = went[sensor][k]
+            writer.add(stamp, **scan)
+    for sensor, writer in writers.items():
+        assert writer.finish().count == 2
+        for k in range(2):
+            back = format.read_scan(tmp_path, sensor, k)
+            assert np.array_equal(back.ring, went[sensor][k][1]["ring"]), (sensor, k)
+        assert format.read_hits(tmp_path, sensor) == []  # no table to name them by
 
 
-def test_a_lidar_left_raw_is_found_to_pack_and_its_index_says_what_was_kept(tmp_path):
-    raw = tmp_path / "lidar" / lidarscans.RAW
-    writer = lidarscans.RawWriter(raw)
-    writer.add(5, **_scan(np.random.default_rng(1), 3, 0))
-    writer.close()
-    assert lidarscans.raw_lidars(tmp_path) == []  # not indexed: not finished rendering
-    lidarscans.write_index(raw, writer.stamps, writer.counts, [(0, 0, 0.0)], RATE)
-    assert lidarscans.raw_lidars(tmp_path) == ["lidar"]
-    index = json.loads((raw / lidarscans.INDEX).read_text(encoding="utf-8"))
-    assert index["counts"] == [3] and index["kept"] == [[0, 0, 0.0]]
+def _paths(paths, hit):
+    named = np.array([*paths, None], object)
+    return named[np.minimum(hit, len(paths))]
 
 
-def test_a_renderers_raw_scans_are_indexed_whichever_renderer_wrote_them(tmp_path):
-    """Scans stamped by a renderer's clock, 5 s ahead of the window: the whole scans within
-    the window kept, numbered by when each began; one that began before it, and one that
-    would end after it, left out."""
-    rng = np.random.default_rng(5)
-    writer = lidarscans.RawWriter(tmp_path / "lidar" / lidarscans.RAW)
-    for k in range(-1, 4):  # began at -0.1, 0, 0.1, 0.2, 0.3 s of the window
-        writer.add(round((5.0 + k / RATE) * 1e9), **_scan(rng, 50, k))
-    result = lidarscans.finish(writer, RATE, lambda ns: ns / 1e9 - 5.0, span=0.3)
-    assert (result.count, result.unit, result.detail) == (3, "scans", "0.00 M points")
-    index = json.loads((writer.raw / lidarscans.INDEX).read_text(encoding="utf-8"))
-    assert [(place, number) for place, number, _ in index["kept"]] == [(1, 0), (2, 1), (3, 2)]
-    assert [began for _, _, began in index["kept"]] == pytest.approx([0.0, 0.1, 0.2])
-    assert index["counts"] == [50] * 5 and index["rate"] == RATE
+def test_an_index_of_many_records_is_filled_in_place(tmp_path, monkeypatch):
+    monkeypatch.setattr(format, "_INDEX_PAIRS", 2)  # 5 scans: records of 2, 2 and 1
+    rng = np.random.default_rng(4)
+    _poses(tmp_path, "lidar", 5)
+    _streamed(tmp_path, _given(rng, [0.0, 0.1, 0.2, 0.3, 0.4], n=30), span=0.5, names=None)
+    assert format.scan_numbers(tmp_path, "lidar") == [0, 1, 2, 3, 4]
+    assert [len(s.ring) for _, s in format.iter_scans(tmp_path, "lidar")] == [30, 80, 0, 180, 230]
+    assert format.read_hits(tmp_path, "lidar") == []
+    assert np.all(format.read_scan(tmp_path, "lidar", 1).hit == format.NO_HIT)
+
+
+def test_a_window_with_a_scan_lost_or_begun_off_its_pose_is_refused_and_nothing_left(tmp_path):
+    rng = np.random.default_rng(2)
+    _poses(tmp_path, "lidar", 3)
+    laz = tmp_path / "lidar" / format.PACKED
+    assert _streamed(tmp_path, _given(rng, [0.0, 0.1, 0.2]), span=0.3).count == 3
+    laz.unlink()
+    with pytest.raises(RuntimeError, match="2 of the window's 3 whole scans: none for scan 0"):
+        _streamed(tmp_path, _given(rng, [0.1, 0.2]), span=0.3)
+    with pytest.raises(RuntimeError, match="2 of the window's 3 whole scans: none for scan 2"):
+        _streamed(tmp_path, _given(rng, [0.0, 0.1]), span=0.3)
+    with pytest.raises(RuntimeError, match=r"16\.7 ms off their poses"):
+        _streamed(tmp_path, _given(rng, [1 / 60, 0.1 + 1 / 60, 0.2 + 1 / 60]), span=0.3)
+    with pytest.raises(RuntimeError, match="no whole scans"):
+        _streamed(tmp_path, _given(rng, [-9.0]), span=0.3)
+    with pytest.raises(RuntimeError, match="writing its scans failed"):  # out of order
+        _streamed(tmp_path, _given(rng, [0.1, 0.0, 0.2]), span=0.3)
+    assert not laz.exists() and not laz.with_name(laz.name + ".part").exists()
 
 
 def test_scans_that_hit_nothing_fail_unless_the_lidar_may_be_blind(tmp_path):
-    def blank():
-        writer = lidarscans.RawWriter(tmp_path / "lidar" / lidarscans.RAW)
-        writer.add(0, **_scan(np.random.default_rng(1), 0, 0))
-        return writer
-
+    rng = np.random.default_rng(1)
+    _poses(tmp_path, "lidar", 1)
+    blank = [(_stamp(0.0), _scan(rng, 0, [1]))]
     with pytest.raises(RuntimeError, match="hit anything"):
-        lidarscans.finish(blank(), RATE, lambda ns: ns / 1e9, span=0.1)
-    result = lidarscans.finish(blank(), RATE, lambda ns: ns / 1e9, span=0.1, blind=True)
+        _streamed(tmp_path, blank, span=0.1)
+    result = _streamed(tmp_path, blank, span=0.1, blind=True)
     assert result.detail == "no points: nothing in reach" and not result.timed
-    with pytest.raises(RuntimeError, match="no whole scans"):
-        lidarscans.finish(blank(), RATE, lambda ns: ns / 1e9 - 9.0, span=0.1)
-
-
-def test_a_window_with_a_scan_lost_or_scans_begun_off_their_poses_is_refused(tmp_path):
-    """The window's whole scans, each once, each begun on its pose: one lost at either end,
-    or all begun an update late (their points would be placed by the wrong poses), refused."""
-
-    def given(began):
-        writer = lidarscans.RawWriter(tmp_path / "lidar" / lidarscans.RAW)
-        rng = np.random.default_rng(2)
-        for k, second in enumerate(began):
-            writer.add(round((5.0 + second) * 1e9), **_scan(rng, 20, k))
-        return writer
-
-    def finish(writer):
-        return lidarscans.finish(writer, RATE, lambda ns: ns / 1e9 - 5.0, span=0.3)
-
-    assert finish(given([0.0, 0.1, 0.2])).count == 3
-    with pytest.raises(RuntimeError, match="2 of the window's 3 whole scans: none for scan 0"):
-        finish(given([0.1, 0.2]))
-    with pytest.raises(RuntimeError, match="2 of the window's 3 whole scans: none for scan 2"):
-        finish(given([0.0, 0.1]))
-    with pytest.raises(RuntimeError, match=r"16\.7 ms off their poses"):
-        finish(given([1 / 60, 0.1 + 1 / 60]))
+    assert format.scan_numbers(tmp_path, "lidar") == [0]

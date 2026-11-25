@@ -18,8 +18,6 @@ from .events import extra as extra
 
 #: A row's states, in the order a sensor goes through them.
 WAITING, RENDERING, WRITING, DONE, FAILED = "waiting", "rendering", "writing", "done", "failed"
-#: A lidar rendered, its scans being packed in one LAZ (`events.Packing`): not done till packed.
-PACKING = "packing"
 #: A caller's step (`Step`) under way: work on what was rendered, after it.
 MAKING = "making"
 #: A row left when its job was cancelled.
@@ -146,17 +144,6 @@ class Board:
                     seconds=row.seconds if made.seconds is None else made.seconds,
                 )
                 return True
-            case events.Packing(sensor, done):
-                row = self._rows.get(sensor)
-                if row is None or row.state == FAILED:
-                    return False
-                packed = done >= 1.0
-                new = replace(
-                    row, state=DONE if packed else PACKING, fraction=1.0 if packed else done
-                )
-                changed = new != row
-                self._rows[sensor] = new
-                return changed
             case events.Step() as step:
                 return self._step(step)
             case events.Rendering(kind, turn, done, seconds, begin):
@@ -262,7 +249,7 @@ def frames_made(r: SensorRow) -> int:
         return r.made
     if r.state == RENDERING:
         return round(r.frames * r.fraction)
-    return r.frames if r.state in (WRITING, PACKING, DONE) else 0
+    return r.frames if r.state in (WRITING, DONE) else 0
 
 
 #: Seconds the pixels a second are worked out over (`Meter`).
