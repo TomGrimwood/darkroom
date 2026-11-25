@@ -15,7 +15,7 @@ How often each kind is updated (both renderers), by `update_rate`:
 
 Each pass starts a whole number of every sensor's periods (`common_period`) before the
 window, so every sensor's frames and scans begin on its own poses; a lidar's scans not on
-them, or any of the window's whole scans missing, are refused (`lidarscans.finish`).
+them, or any of the window's whole scans missing, are refused (`lidarscans.ScanWriter.finish`).
 
 Measured (Isaac Sim 6.2, ovrtx 0.7.0): a lidar scanning at a rate other than its model's own
 (ST's VL53L9, made for 30 Hz, at 15 or 60 Hz, with its report and pattern rates to match)

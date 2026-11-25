@@ -13,8 +13,9 @@ is made, and only lidars and rolling shutters need it.
   due, so they need no loop of laps (`renderers.loop`, Isaac Sim's). Their pictures, and
   where the stage asks, each pixel's segment, normal and distance.
 - The lidars (`_lidars`) are measured as the timeline plays the window once: each a copy of
-  the lidar with a `PointCloud` render product, its scans written raw as they end
-  (`ovrtx_lidar`), in the files Isaac Sim's lidars are (`lidarscans`).
+  the lidar with a `PointCloud` render product, its scans handed over as they end
+  (`ovrtx_lidar`) and written into its LAZ on a thread of its own as the render goes on
+  (`lidarscans.ScanWriter`).
 - The skies (`_skies`): a fisheye camera beside each antenna (`darkroom.eyes.sky`) rendering
   each pixel's semantic class, a view a fix (`darkroom.skies.view`).
 
@@ -301,11 +302,14 @@ def _lidars(sim: SimulationContext, renderer: Any) -> list[Outcome]:
     import math
     import time
 
-    from darkroom import events, lidarscans, process, sensorkit
+    from darkroom import events, format, lidarscans, process, sensorkit
     from darkroom.events import Plan, Planned, Rendering, Writing
     from darkroom.outcome import finished, made_before
     from darkroom.rates import update_rate
     from darkroom.renderers import outfit
+    from darkroom.sensorkit import semantics
+
+    from .ovrtx_lidar import Names
 
     stage, job = sim.stage, sim.job
     out, kind = Path(job.out), "lidar"
@@ -323,8 +327,17 @@ def _lidars(sim: SimulationContext, renderer: Any) -> list[Outcome]:
     # With hits, what every object in the scene is called, read once, before the lidars are
     # on: only with that on the stage do their points say what they hit.
     table = renderer.object_table() if job.hits else None
+    names = Names(table) if table is not None else None
+    # A segmented stage's labels name what each point hit, as its cameras' segments do.
+    taxonomy = stage.GetRootLayer().customLayerData.get(format.SEGMENT_TAXONOMY)
+    labels = semantics.labeller(stage, taxonomy) if taxonomy and names else None
+    span = end - start
     measuring = {
-        s.name: renderer.create_lidar_data(str(s.path), out / s.name / lidarscans.RAW, job.hits)
+        s.name: renderer.create_lidar_data(
+            str(s.path),
+            lidarscans.ScanWriter(out, s.name, s.rate, span, names, job.blind, labels),
+            job.hits,
+        )
         for s in sensors
     }
     # ovrtx starts a lidar's scans on its own clock's whole periods, and that clock ran on
@@ -335,6 +348,13 @@ def _lidars(sim: SimulationContext, renderer: Any) -> list[Outcome]:
     early = -round(sim.clock * rate) % beat
     sim.seek(first - (beat + early) / rate)
     ahead = sim.clock - sim.time  # ovrtx's clock over the timeline: the same all the way
+
+    def seconds(stamp_ns: Any) -> Any:
+        """Seconds after the window's start the stage was at when ovrtx's clock said `stamp_ns`."""
+        return stamp_ns / 1e9 - ahead - first
+
+    for one in measuring.values():
+        one.scans.start(seconds)
     process.progress("rendering lidars", 0.0, **events.extra(Rendering(kind, 0, 0.0)))
     began = told = time.perf_counter()
     try:
@@ -349,41 +369,35 @@ def _lidars(sim: SimulationContext, renderer: Any) -> list[Outcome]:
                 fraction = min(max(sim.time - first, 0.0), end - start) / (end - start)
                 said = Rendering(kind, 0, fraction, now - began)
                 process.progress("rendering lidars", fraction, **events.extra(said))
+    except BaseException:
+        for one in measuring.values():  # nothing half-written left in the capture
+            one.scans.abort()
+        raise
     finally:
         for one in measuring.values():  # each render product off the stage
             renderer.cleanup(one)
     took = time.perf_counter() - began
     process.progress("lidars: writing", None, **events.extra(Writing(kind, 0)))
-
-    def seconds(stamp_ns: Any) -> Any:
-        """Seconds after the window's start the stage was at when ovrtx's clock said `stamp_ns`."""
-        return stamp_ns / 1e9 - ahead - first
-
-    scans = {s.name: _Scans(measuring[s.name], s.rate, job.blind, table) for s in sensors}
     return kept + [
-        finished(kind, s, scans[s.name], seconds, end - start, took, out, "lidars") for s in sensors
+        finished(kind, s, _Scans(measuring[s.name]), seconds, span, took, out, "lidars")
+        for s in sensors
     ]
 
 
 class _Scans:
-    """A lidar measured, for `outcome.finished`: its raw scans indexed for packing."""
+    """A lidar measured, for `outcome.finished`: its scans' LAZ finished."""
 
-    def __init__(self, measured: Any, rate: float, blind: bool, table: Any) -> None:
-        self.measured, self.rate, self.blind, self.table = measured, rate, blind, table
+    def __init__(self, measured: Any) -> None:
+        self.measured = measured
 
     def finish(self, seconds: Any, span: float, keep_from: float = 0.0) -> Any:
-        """The whole scans within the window, indexed (`lidarscans.finish`). Raises when
-        ovrtx gave its points another way than asked."""
-        from darkroom import lidarscans
-
+        """Its writer finished (`lidarscans.ScanWriter.finish`, which kept the whole scans
+        within the window). Raises when ovrtx gave its points another way than asked."""
         measured = self.measured
         if measured.wrong is not None:
-            measured.raws.close()
+            measured.scans.abort()
             raise RuntimeError(f"ovrtx gave points as {measured.wrong}, not x, y, z in its axes.")
-        from .ovrtx_lidar import names_of
-
-        names = names_of(self.table, measured.seen) if self.table is not None else None
-        return lidarscans.finish(measured.raws, self.rate, seconds, span, names, self.blind)
+        return measured.scans.finish()
 
 
 def _skies(sim: SimulationContext, renderer: Any) -> list[Outcome]:

@@ -50,10 +50,12 @@ each camera's own auto exposure among them. What ovrtx measures about itself is 
   (`darkroom/sensorkit/camera.py` has the convention). Things that turn fast under it need
   more steps a second than the stage has frames: `OVRTXRendererCfg(step_rate=960)`.
 - The lidars are the stage's own, unchanged (ovrtx's lidar is RTX's, the same model:
-  `OmniLidar`, `OmniSensorGenericLidarCoreAPI`), their scans in the same files, each point's
-  ring, material and (with `Options.lidar_hits`) prim; a scan is gathered over the stage's
-  frames, each firing from where the lidar was in its frame (`darkroom/rates.py` has every
-  kind's update rate); a lidar missing any scan is refused.
+  `OmniLidar`, `OmniSensorGenericLidarCoreAPI`), each point in the lidar's own frame as a
+  driver gives it, with its ring, material and (with `Options.lidar_hits`) prim, and on a
+  segmented stage that prim's label as the cameras' segments name it; a scan is gathered over
+  the stage's frames, each firing from where the lidar was in its frame (`darkroom/rates.py`
+  has every kind's update rate), and written into the lidar's LAZ as the render goes on; a
+  lidar missing any scan is refused.
 - A camera's distances are from its centre along each pixel's ray. Fisheyes are ovrtx's own
   OpenCV fisheye, corners and all. RTX's motion blur is right up to 8 steps between a camera's frames, and refused
   past (`darkroom.ovrtx.BLUR_STEPS`). `darkroom/format.py` says every output's frame, units

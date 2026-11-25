@@ -104,22 +104,23 @@ def test_a_swaying_lidars_points_lie_on_the_walls_too(room, tmp_path_factory):
     )
 
 
-def test_object_ids_are_named_from_ovrtxs_table_only_those_asked_for():
+def test_object_ids_are_named_from_ovrtxs_table_none_for_one_it_has_not():
     from darkroom.ovrtx import ovrtx_lidar
 
-    paths = ["/World/Wall", "/World/Ground/dirt6", "/World/Tree"]
-    ids = np.array([[7, 0, 0, 0], [1, 2, 3, 0], [9, 9, 9, 9]], np.uint32)
+    paths = ["/World/Wall", "/World/Ground/dirt6", "/World/Tree", "/World/Rock"]
+    ids = np.array([[7, 0, 0, 0], [1, 2, 3, 0], [9, 9, 9, 9], [1, 2, 4, 0]], np.uint32)
     ends = np.cumsum([0, *(len(p) for p in paths)]).astype(np.uint64)
     table = (ids, ends, np.frombuffer("".join(paths).encode(), np.uint8))
-    wanted = np.ascontiguousarray(ids[[1, 2]]).view(ovrtx_lidar.ID).reshape(-1)
-    named = ovrtx_lidar.names_of(table, wanted)
-    one = int.from_bytes(ids[1].tobytes(), "little")
-    assert named == {
-        one: "/World/Ground/dirt6",
-        int.from_bytes(ids[2].tobytes(), "little"): "/World/Tree",
-    }
+    asked = np.array([[9, 9, 9, 9], [1, 2, 4, 0], [1, 2, 3, 0], [5, 5, 5, 5]], np.uint32)
+    names = ovrtx_lidar.Names(table)  # two IDs alike in their low half: told apart
+    assert names(asked.view(np.uint8)) == [
+        "/World/Tree",
+        "/World/Rock",
+        "/World/Ground/dirt6",
+        None,
+    ]
     empty = (np.zeros((0, 4), np.uint32), np.zeros(1, np.uint64), np.zeros(0, np.uint8))
-    assert ovrtx_lidar.names_of(empty, wanted) == {}
+    assert ovrtx_lidar.Names(empty)(asked.view(np.uint8)) == [None] * 4
 
 
 def test_an_output_ovrtx_could_not_make_is_said_with_its_reason():

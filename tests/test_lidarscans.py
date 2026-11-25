@@ -113,6 +113,29 @@ def test_scans_out_to_a_long_range_lidars_reach_pack(tmp_path):
     assert np.abs(back.points - scan["points"]).max() <= 0.6e-4 + 350 * np.finfo(np.float32).eps
 
 
+def test_several_lidars_each_pack_as_it_went_in(tmp_path):
+    rng = np.random.default_rng(7)
+    went = {}
+    for sensor in ("left", "right", "middle"):
+        pose = format.Poses(np.zeros(1), np.zeros((1, 3)), np.array([[1.0, 0, 0, 0]]))
+        format.write_poses(tmp_path, sensor, pose)
+        raw = tmp_path / sensor / lidarscans.RAW
+        writer = lidarscans.RawWriter(raw)
+        scan = _scan(rng, 3_000, 0)
+        del scan["objects"]
+        writer.add(7_000_000_000, **scan)
+        writer.close()
+        lidarscans.write_index(raw, writer.stamps, writer.counts, [(0, 0, 0.0)], RATE, None)
+        went[sensor] = scan
+    told = []
+    assert lidarscans.pack_all(tmp_path, lambda s, d: told.append((s, d)))[0] == 3
+    assert {s for s, d in told if d == 1.0} == set(went)
+    for sensor, scan in went.items():
+        back = format.read_scan(tmp_path, sensor, 0)
+        assert np.abs(back.points - scan["points"]).max() <= 0.6e-4
+        assert np.array_equal(back.ring, scan["ring"])
+
+
 def test_a_lidar_left_raw_is_found_to_pack_and_its_index_says_what_was_kept(tmp_path):
     raw = tmp_path / "lidar" / lidarscans.RAW
     writer = lidarscans.RawWriter(raw)

@@ -111,6 +111,9 @@ PACKED = "scans.laz"
 #: A lidar's prims its points came back from (a JSON list of prim paths, `Scan.hit` indexes it);
 #: a point whose prim RTX did not name.
 HITS, NO_HIT = "hits.json", 0xFFFFFFFF
+#: With the stage segmented (`SEGMENT_TAXONOMY`), what each of those prims is labelled, as a
+#: camera's segments name it (`sensorkit.semantics`), one each.
+HIT_LABELS = "hit_labels.json"
 IMU = "imu.npz"
 
 
@@ -344,6 +347,15 @@ def scan_numbers(folder: str | Path, sensor: str) -> list[int]:
     return sorted(_index(packed)) if packed.is_file() else []
 
 
+def scan_counts(folder: str | Path, sensor: str) -> dict[int, int]:
+    """How many points each of lidar `sensor`'s scans has, by number, from its LAZ's index:
+    none read."""
+    packed = Path(folder) / sensor / PACKED
+    if not packed.is_file():
+        return {}
+    return {number: count for number, (_, count) in sorted(_index(packed).items())}
+
+
 #: Points read from a LAZ in one call (`iter_scans`): its parallel decompressor given many
 #: chunks at once (a scan a read was 12.8 ms a scan; 64 scans a read, 2.5 ms).
 READ_AHEAD = 2_000_000
@@ -483,6 +495,20 @@ def write_hits(folder: str | Path, sensor: str, paths: list[str]) -> Path:
 def read_hits(folder: str | Path, sensor: str) -> list[str]:
     """The prims a lidar's points came back from (`Scan.hit` indexes it); empty if not recorded."""
     file = Path(folder) / sensor / HITS
+    return json.loads(file.read_text(encoding="utf-8")) if file.is_file() else []
+
+
+def write_hit_labels(folder: str | Path, sensor: str, labels: list[str]) -> Path:
+    file = Path(folder) / sensor / HIT_LABELS
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(json.dumps(labels, indent=0) + "\n", encoding="utf-8")
+    return file
+
+
+def read_hit_labels(folder: str | Path, sensor: str) -> list[str]:
+    """What each prim of `read_hits` is labelled in the stage's `SEGMENT_TAXONOMY`, as a
+    camera's segments name it ("" for nothing labelled); empty if not recorded."""
+    file = Path(folder) / sensor / HIT_LABELS
     return json.loads(file.read_text(encoding="utf-8")) if file.is_file() else []
 
 
