@@ -78,13 +78,17 @@ def sensors(stage: Usd.Stage, kinds: Collection[str] | None = None) -> list[Sens
 
 
 def _kit(prim: Usd.Prim) -> str:
-    """The name of the kit `prim` is in: its ancestor just under a frame, else its parent."""
+    """The name of the kit `prim` is in: its ancestor just under a frame, else its nearest
+    ancestor named otherwise (a rig's, past the holder a rig places a sensor by, named as it)."""
     here = prim
     while here.GetParent() and here.GetParent().GetParent():
         if here.GetParent().GetParent().GetName() == "Frames":
             return here.GetName()
         here = here.GetParent()
-    return prim.GetParent().GetName()
+    above = prim.GetParent()
+    while above.GetParent() and above.GetName() == prim.GetName():
+        above = above.GetParent()
+    return above.GetName()
 
 
 def mark(layer: Sdf.Layer, path: str | Sdf.Path, kind: Kind, rate: float | None = None) -> None:
