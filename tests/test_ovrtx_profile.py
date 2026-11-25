@@ -49,5 +49,4 @@ def test_a_captures_gpu_numbers_are_over_every_kind_ovrtx_rendered():
     said = profile.stats({"camera": cameras, "lidar": lidars})
     assert said["ovrtx"] == {"camera": cameras, "lidar": lidars}
     assert said["gpu_memory_most_mb"] == 5000.0 and said["gpu_busy_average_percent"] == 60
-    assert said["gpu_memory_before_mb"] == 0.0  # its own memory, not the whole card's
     assert profile.stats({}) == {"ovrtx": {}}

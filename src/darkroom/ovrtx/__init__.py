@@ -182,8 +182,7 @@ def render(job: RenderJob, kinds: list[str] | None = None) -> dict:
     if other:
         raise RuntimeError(f"ovrtx renders no {', '.join(other)}: those are Isaac Sim's.")
     kinds = [kind for kind in KINDS if kinds is None or kind in kinds]
-    # The parts timed; the GPU's numbers are ovrtx's own (`profile`), not read off the card.
-    watch = perf.Watch(read=lambda: None)
+    watch = perf.Watch()  # the parts timed; the GPU's numbers are ovrtx's own (`profile`)
     cfg: Any = renderers.of(job.renderer_cfg)
     outcomes: list[Outcome] = []
     measured: dict[str, dict[str, Any]] = {}

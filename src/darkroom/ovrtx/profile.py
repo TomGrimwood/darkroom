@@ -1,7 +1,7 @@
 """What ovrtx measured of itself as it rendered (its profiling API): how long the GPU took
 over each part of a frame, and the GPU's memory by what holds it. A capture's `perf.json`
-has it per kind rendered, under "ovrtx" (`summary`), and its line's GPU numbers are ovrtx's
-own, where NVML's are the whole card's read once a second (`darkroom.perf`).
+has it per kind rendered, under "ovrtx" (`summary`), and its line's GPU numbers
+(`darkroom.perf.line`) are these: this process's own, not the whole card's.
 
     measured = Profile()      # once an engine is made: profiling is the process's
     ...
@@ -91,13 +91,10 @@ OVER_ALL = {
 
 def stats(kinds: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """What a capture's `perf.json` has of ovrtx's own measures: each kind's `summary` under
-    "ovrtx", and the GPU's memory and how busy it was over them all (as `perf.Watch` says an
-    the card's, but this process's own: none in use before it)."""
+    "ovrtx", and the GPU's memory and how busy it was over them all."""
     said: dict[str, Any] = {"ovrtx": kinds}
     for key, over in OVER_ALL.items():
         values = [kind[key] for kind in kinds.values() if key in kind]
         if values:
             said[key] = over(values)
-    if "gpu_memory_most_mb" in said:
-        said["gpu_memory_before_mb"] = 0.0
     return said

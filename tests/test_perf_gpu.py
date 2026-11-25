@@ -2,6 +2,7 @@
 timings in one line; a sensor's mosaic."""
 
 import ctypes
+import json
 
 from PIL import Image
 
@@ -47,15 +48,45 @@ def test_a_captures_timings_are_one_line_as_strider_reads_them():
     took = {
         "seconds": 61.2,
         "parts": [{"name": "stage", "seconds": 1.1}, {"name": "cameras", "seconds": 60.1}],
-        "memory_most_mb": 13312,
-        "gpu_memory_before_mb": 4198.4,
-        "gpu_memory_most_mb": 9523.2,
-        "gpu_busy_average_percent": 32,
     }
-    assert perf.line(took) == (
-        "took 61 s: stage 1 s, cameras 60 s; GPU memory 9.3 GB at most (4.1 GB before), "
-        "GPU 32% busy on average; 13.0 GB of memory"
+    assert perf.line(took) == "took 61 s: stage 1 s, cameras 60 s"  # no GPU measured
+    measured = {**took, "gpu_memory_most_mb": 9523.2, "gpu_busy_average_percent": 32}
+    assert perf.line(measured) == (
+        "took 61 s: stage 1 s, cameras 60 s; GPU memory 9.3 GB at most, GPU 32% busy on average"
     )
+
+
+def test_a_runs_parts_are_timed_one_after_another():
+    watch = perf.Watch()
+    assert watch.finish()["parts"] == []  # nothing begun: nothing to say, and no failure
+    watch.part("stage")
+    watch.part("cameras")
+    took = watch.finish()
+    assert [p["name"] for p in took["parts"]] == ["stage", "cameras"]
+    assert took["seconds"] >= sum(p["seconds"] for p in took["parts"]) - 0.02
+
+
+def test_a_capture_carried_on_adds_its_timings_to_those_it_had(tmp_path):
+    # As darkroom 0.1.2 left one on Windows: a figure it had no number for.
+    had = {
+        "seconds": 10.0,
+        "parts": [{"name": "cameras", "seconds": 10.0}],
+        "memory_most_mb": None,
+        "gpu_memory_most_mb": 5000.0,
+        "ovrtx": {"camera": {"gpu_ms": {}}},
+    }
+    (tmp_path / perf.FILE).write_text(json.dumps(had), encoding="utf-8")
+    now = {
+        "seconds": 5.0,
+        "parts": [{"name": "lidars", "seconds": 5.0}],
+        "gpu_memory_most_mb": 3000.0,
+        "ovrtx": {"lidar": {"gpu_ms": {}}},
+    }
+    both = perf.add(tmp_path, now)
+    assert both["seconds"] == 15.0 and [p["name"] for p in both["parts"]] == ["cameras", "lidars"]
+    assert both["gpu_memory_most_mb"] == 5000.0 and set(both["ovrtx"]) == {"camera", "lidar"}
+    assert json.loads((tmp_path / perf.FILE).read_text(encoding="utf-8")) == both
+    assert perf.line(both).startswith("took 15 s: cameras 10 s, lidars 5 s; GPU memory 4.9 GB")
 
 
 def test_a_mosaic_is_a_dozen_of_the_frames_each_shown_small(tmp_path):
