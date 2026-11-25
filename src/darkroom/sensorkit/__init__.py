@@ -10,7 +10,7 @@ a frame (any Xform in a `Frames` scope, whoever declares it; a carrier's rigs go
 `SensorMount`). Knows nothing of environments, characters or trajectories.
 """
 
-from . import camera, gnss, imu, lidar, motion, site, sky
+from . import camera, gnss, imu, lidar, motion, semantics, site, sky
 from .frames import FRAMES, SENSOR_MOUNT, asset_path, frames, identifier
 from .kinds import DEBUG, KINDS, RENDERED, Sensor, kind_of, mark, sensors
 
@@ -31,6 +31,7 @@ __all__ = [
     "lidar",
     "mark",
     "motion",
+    "semantics",
     "sensors",
     "site",
     "sky",
