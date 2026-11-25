@@ -52,6 +52,33 @@ def test_truth_writes_poses_imu_and_fixes(tmp_path):
     assert abs(east - 4.0) < 0.01 and np.allclose(fixes["height"], 41.6)
 
 
+def test_prims_asked_for_are_kept_as_bodies_by_path_or_pattern(tmp_path):
+    import pytest
+
+    stage_file = _stage(tmp_path)
+    stage = Usd.Stage.Open(str(stage_file))
+    for part in ("Arm", "Bucket", "Bucket/Looks"):  # a pattern's `*` within one name
+        UsdGeom.Xform.Define(stage, f"/Machine/{part}").AddTranslateOp().Set((0, 0, 2.0))
+    UsdGeom.Xform.Define(stage, "/Spare/Arm")
+    stage.Save()
+    meta = truth.write(
+        stage_file,
+        tmp_path / "capture",
+        window=(1.0, 3.0),
+        place=None,
+        bodies=["/Thing", "/Machine/*"],
+    )
+    assert meta.bodies == {"Thing": "/Thing", "Arm": "/Machine/Arm", "Bucket": "/Machine/Bucket"}
+    arm = format.read_poses(tmp_path / "capture", "Arm")
+    assert np.allclose(arm.position, (0, 0, 2.0)) and len(arm.seconds) == 2 * truth.BODY_RATE + 1
+    with pytest.raises(RuntimeError, match="No prim is '/Machine/Boom"):
+        truth.write(stage_file, tmp_path / "again", place=None, bodies=["/Machine/Boom*"])
+    with pytest.raises(RuntimeError, match="Two bodies are called Arm"):
+        truth.write(
+            stage_file, tmp_path / "twice", place=None, bodies=["/Machine/Arm", "/Spare/Arm"]
+        )
+
+
 def test_an_antenna_keeps_the_truth_its_tips_beside_it_and_how_much_sky_it_saw(tmp_path):
     """The thing carrying the antenna has a tip on the ground at its origin: its fixes go beside
     the antenna's. Open sky for the first second, none after."""

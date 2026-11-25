@@ -64,6 +64,10 @@ class Options:
     #: in `hits.json`), for the test ranges' charts; else none. Off, it costs nothing (on, RTX's
     #: object ID table of the whole scene is read every update).
     lidar_hits: bool = False
+    #: Prims whose poses are kept as bodies besides what carries the sensors (`Meta.bodies`):
+    #: paths, or patterns of them (`fnmatch`'s: "/World/Machine/*"). A sensor under one rides
+    #: on it (its exports mount it there); one that holds no sensor is a truth of its own.
+    bodies: Sequence[str] = ()
     #: How many cameras are on at once (`turns.PACKING`): "one by one", whatever the GPU's
     #: memory; else while they fit in what is free, "conservative", "normal" or "aggressive"
     #: in what a pixel is taken to need and the headroom kept.

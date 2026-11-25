@@ -219,7 +219,9 @@ def _prepare(
         raise RuntimeError(f"{out} has a capture in it already: capture into a new folder.")
     stage_file = Path(job.stage_file).resolve()
     kept = _carry_on(out, stage_file, on_line) if (out / format.META).exists() else []
-    meta = truth.write(stage_file, out, o.window, o.kinds, on_line=on_line, cell=o.scenery_cell)
+    meta = truth.write(
+        stage_file, out, o.window, o.kinds, on_line=on_line, cell=o.scenery_cell, bodies=o.bodies
+    )
     for name in kept:  # a board shows them done from the start
         sensor, was = meta.sensors.get(name), format.was_made(out, name)
         if on_progress and sensor is not None and was is not None:
